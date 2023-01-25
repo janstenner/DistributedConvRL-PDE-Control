@@ -1,22 +1,10 @@
-# RLOptimalControl
+## This is the publicly available codebase for the experiments shown in the article **Distributed Control of Partial Differential Equations Using Convolutional Reinforcement Learning**
 
-This code base is using the Julia Language and [DrWatson](https://juliadynamics.github.io/DrWatson.jl/stable/)
-to make a reproducible scientific project named
-> RLOptimalControl
-
-It is authored by Jan Stenner, Vikas Chidananda.
-
-To (locally) reproduce this project, do the following:
-
-0. Download this code base. Notice that raw data are typically not included in the
-   git-history and may need to be downloaded independently.
-1. Open a Julia console and do:
+To set up the project just download/clone this repository, activate the julia project, instantiate.
    ```
    julia> using Pkg
-   julia> Pkg.add("DrWatson") # install globally, for using `quickactivate`
    julia> Pkg.activate("path/to/this/project")
    julia> Pkg.instantiate()
    ```
 
-This will install all necessary packages for you to be able to run the scripts and
-everything should work out of the box, including correctly finding local paths.
+Afterwards you can run the experiments found in the subfolders of the `scripts` directory (the `setup` folders contain needed code but no experiments themselves).
