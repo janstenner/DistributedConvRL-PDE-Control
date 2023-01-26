@@ -1,4 +1,4 @@
-This is the publicly available codebase for the experiments shown in the article **Distributed Control of Partial Differential Equations Using Convolutional Reinforcement Learning**
+This is the publicly available codebase for the experiments shown in the article [**Distributed Control of Partial Differential Equations Using Convolutional Reinforcement Learning**](https://arxiv.org/abs/2301.10737)
 
 To set up the project just download/clone this repository, activate the julia project, instantiate.
    ```
