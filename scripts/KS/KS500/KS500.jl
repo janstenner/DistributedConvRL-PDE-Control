@@ -1,5 +1,6 @@
-seed = 13
 dirpath = string(@__DIR__)
+seed = 914
+
 
 Lx = 500.0
 nx = 600
@@ -15,8 +16,6 @@ sigma_actuators = 1.0
 μ = 0.0
 
 include(pwd() * "/scripts/KS/setup/KSSetup.jl")
-
-initialize_setup()
 
 
 # here we load an agent that was previously trained on an environment with Lx = 200 (this works since the sensors and actuators share the same distance and parameters of the gaussian curves)

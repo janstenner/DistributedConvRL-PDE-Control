@@ -1,5 +1,11 @@
-seed = 13
 dirpath = string(@__DIR__)
+seed = 59
+
+
+# Set this to false if you want to train an agent yourself.
+# Otherwise this script will load up a pre-trained agent and do an evaluation run.
+evaluation = true
+
 
 Lx = 200.0
 nx = 240
@@ -16,11 +22,11 @@ sigma_actuators = 1.0
 
 include(pwd() * "/scripts/KS/setup/KSSetup.jl")
 
-initialize_setup()
 
-
-# use train(true) to train an agent yourself or load() to load up a pre-trained agent
-train(true; loops = 10)
-#load()
-
-plot_heat(p_te = 200.0, p_t_action = 100.0)
+if evaluation
+    load()
+    plot_heat(p_te = 200.0, p_t_action = 100.0)
+else
+    train(; loops = 6)
+    save()
+end

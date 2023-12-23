@@ -1,5 +1,6 @@
-seed = 13
 dirpath = string(@__DIR__)
+seed = 914
+
 
 Lx = 200.0
 nx = 240
@@ -16,10 +17,8 @@ sigma_actuators = 1.0
 
 include(pwd() * "/scripts/KS/setup/KSSetup.jl")
 
-initialize_setup()
 
+# In this script we only load up an agent that was previously trained on an environment without disturbance (μ = 0.0) and do the evaluation run
 
-# here we load an agent that was previously trained on an environment without disturbance (μ = 0.0)
 load()
-
 plot_heat(p_te = 200.0, p_t_action = 100.0)

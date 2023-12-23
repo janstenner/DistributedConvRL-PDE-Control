@@ -1,5 +1,9 @@
-seed = 126
 dirpath = string(@__DIR__)
+seed = 155
+
+# Set this to false if you want to train an agent yourself.
+# Otherwise this script will load up a pre-trained agent and do an evaluation run.
+evaluation = true
 
 Lx = 10.0
 nx = 100
@@ -11,11 +15,12 @@ actuators_to_sensors = collect(3:18)
 
 include(pwd() * "/scripts/Keller-Segel/setup/KellerSegelSetup.jl")
 
-initialize_setup()
 
 
-# use train(true) to train an agent yourself or load() to load up a pre-trained agent
-train(true; loops = 10)
-#load()
-
-plot_heat()
+if evaluation
+    load()
+    plot_heat(from=14)
+else
+    train(; loops = 13)
+    save()
+end

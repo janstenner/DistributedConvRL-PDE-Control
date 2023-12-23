@@ -113,8 +113,8 @@ function plot_heat(;use_best = true, p_dt = nothing, p_te = 30.0, p_t_action = 2
                 #title = "plot_best = $plot_best,  use_best = $use_best,   best NN: $(hook.bestepisode)",
                 coloraxis = attr(cmin = -ymax, cmid = 0, cmax = ymax, colorscale = colorscale),
                 coloraxis2 = attr(cmin = -pmax, cmid = 0, cmax = pmax, colorscale = colorscale),
-                # yaxis = attr(title="y", gridcolor = "#aaaaaa", linecolor = "#000000"),
-                # xaxis = attr(title="t", gridcolor = "#aaaaaa", linecolor = "#000000", range = [from,to])
+                #yaxis = attr(gridcolor = "#aaaaaa", linecolor = "#000000"),
+                #xaxis = attr(title="t", gridcolor = "#aaaaaa", linecolor = "#000000", range = [from,to])
             )
 
     if plot_separate
@@ -149,7 +149,7 @@ function plot_heat(;use_best = true, p_dt = nothing, p_te = 30.0, p_t_action = 2
             add_trace!(p, heatmap(x = x_axis, y = y_axis, z = yresults[i,:,:], coloraxis="coloraxis"), row = i, col = 1)
         end
         add_trace!(p, heatmap(x = x_axis, y = y_axis, z = presults, coloraxis="coloraxis2"), row = yplots + 1, col = 1)
-        add_trace!(p, scatter(x = x_axis, y = rresults), row = yplots + 2, col = 1)
+        add_trace!(p, scatter(x = x_axis, y = rresults .* (-1)), row = yplots + 2, col = 1)
         
         
         #p = plot(heatmap(x = x_axis, y = y_axis, z = yresults, coloraxis="coloraxis"))

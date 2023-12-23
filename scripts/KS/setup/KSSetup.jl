@@ -14,14 +14,14 @@ include(pwd() * "/src/PDEagent.jl")
 include(pwd() * "/src/PDEenv.jl")
 include(pwd() * "/src/PDEhook.jl")
 include(pwd() * "/src/plotting.jl")
+include(pwd() * "/src/StopCondition.jl")
 
-# env parameters
-te = 80.0
+
+te = 5.0
 t0 = 0.0
 dt = 0.1
-oversampling = 15
-min_best_episode = 10
-gpu_env = false
+oversampling = 30
+min_best_episode = 1
 
 te_plot = 50.0
 dt_plot = dt
@@ -37,11 +37,12 @@ xx = collect(dx:dx:Lx)
 
 # agent tuning parameters
 memory_size = 0
-nna_scale = 0.7
+nna_scale = 0.6
+nna_scale_critic = 7.0
 drop_middle_layer = true
 temporal_steps = 1
-action_punish = 0.0#0.0002#0.2
-delta_action_punish = 0.0#0.0002#0.5
+action_punish = 0.002#0.2
+delta_action_punish = 0.002#0.5
 window_size = 1
 use_gpu = false
 action_space = Space(fill(-1..1, (1 + memory_size, length(actuator_positions))))
@@ -62,14 +63,18 @@ rng = StableRNG(seed)
 Random.seed!(seed)
 y = 0.99f0
 p = 0.995f0
-batch_size = 50
-start_steps = -1
+batch_size = 3
+start_steps = 6
 start_policy = ZeroPolicy(action_space)
-update_after = 100
-update_freq = 10
+update_after = 10
+update_freq = 1
+update_loops = 20
+reset_stage = POST_EPISODE_STAGE
+learning_rate = 0.0005
+learning_rate_critic = 0.001
 act_limit = 1.0
-act_noise = 0.1
-trajectory_length = 5000
+act_noise = 1.2
+trajectory_length = 150_000
 
 
 boundary_condition = "periodic"
@@ -123,19 +128,6 @@ d1 = 1im*alpha
 d2 = - alpha.^2
 
 function do_step(env)
-    u = env.y
-
-    Nn1  = G.*fft(u.*u) # -u u_x (spectral), notation Nn = N^n     = N(u(n dt))
-    ufft  = fft(u)        # transform u to spectral
-
-    Nn  = G.*fft(real(u).^2) # compute Nn = -u u_x
-
-    ufft = A_inv .* (B .* ufft + dt32*Nn - dt2*Nn1 + dt * fft(env.p))
-
-    real(ifft(ufft))
-end
-
-function do_step2(env)
     dt_oversample = dt / oversampling
     dt2  = dt_oversample/2
     dt32 = 3*dt_oversample/2
@@ -167,66 +159,14 @@ function do_step2(env)
     real(u)
 end
 
-function do_step_with_reward(env)
-    dt_oversample = dt / oversampling
-    dt2  = dt_oversample/2
-    dt32 = 3*dt_oversample/2
-    A_inv = (ones(nx) - dt2*L).^(-1)
-    B =  ones(nx) + dt2*L
-
-    u = env.y
-    u = (1+0im)*u       # force u to be complex
-
-    Nn = G.*fft(u.^2)
-    Nn1  = copy(Nn)  # -u u_x (spectral), notation Nn = N^n     = N(u(n dt))
-    FFT!*u        # transform u to spectral
-
-    D_reward = 0
-    P_reward = 0
-
-    dy1 = d1 .* u
-    dy2 = d2 .* u
-    u_temp = copy(u)
-
-    for n = 1:oversampling
-        Nn1 .= Nn   # shift nonlinear term in time
-        Nn .= u         # put u into N in prep for comp of nonlineat
-        
-        IFFT!*Nn       # transform Nu to gridpt values, in place
-        Nn .= Nn.*Nn   # collocation calculation of u^2
-        FFT!*Nn        # transform Nu back to spectral coeffs, in place
-
-        Nn .= G.*Nn
-
-        # loop fusion! Julia translates the folling line of code to a single for loop. 
-        u .= A_inv .*(B .* u .+ dt32.*Nn .- dt2.*Nn1 + dt_oversample * fft(env.p))
-
-        dy1 .= d1 .* u
-        dy2 .= d2 .* u
-        u_temp .= u
-        IFFT!*dy1
-        IFFT!*dy2
-        IFFT!*u_temp
-        D_reward += (1/n) * (mean(real(dy2).^2) - D_reward)
-        P_reward += (1/n) * (mean(real(dy1).^2) + mean(real(u_temp).*env.p) - P_reward)
-    end
-
-    reward = - abs( D_reward + P_reward ) * dt / length(actuator_positions)
-
-    env.reward = [reward for i in actuator_positions]
-    
-    IFFT!*u
-    real(u)
-end
-
 function reward_function(env)
-    y = abs.(env.y)
+    y = env.y .* 6
     
     sensors = zeros(length(actuator_positions))
 
     #convolution
     for i in 1:length(actuator_positions)
-        sensors[i] = dot(y, gaussians[actuators_to_sensors[i]]) / (max_value * 1600)
+        sensors[i] = abs.(dot(y, gaussians[actuators_to_sensors[i]])).^1.3 / (max_value * 3)
     end
     sensor_rewards = - abs.(sensors)
 
@@ -258,7 +198,7 @@ function featurize(y0 = nothing, t0 = nothing; env = nothing)
 
     #convolution
     for i in 1:length(sensor_positions)
-        sensors[i] = dot(y, gaussians[i]) / max_value
+        sensors[i] = dot(y, gaussians[i]) / (max_value)
     end
 
     window_half_size = Int(floor(window_size/2))
@@ -308,7 +248,7 @@ end
 # PDEenv can also take a custom y0 as a parameter. Example: PDEenv(y0=y0_sawtooth, ...)
 function initialize_setup(;use_random_init = false)
 
-    global env = PDEenv(do_step = do_step2, 
+    global env = PDEenv(do_step = do_step, 
                 reward_function = reward_function,
                 featurize = featurize,
                 prepare_action = prepare_action,
@@ -329,13 +269,18 @@ function initialize_setup(;use_random_init = false)
                         start_steps = start_steps, 
                         start_policy = start_policy,
                         update_after = update_after, 
-                        update_freq = update_freq, 
+                        update_freq = update_freq,
+                        update_loops = update_loops,
+                        reset_stage = reset_stage,
                         act_limit = act_limit, 
                         act_noise = act_noise,
                         nna_scale = nna_scale,
+                        nna_scale_critic = nna_scale_critic,
                         drop_middle_layer = drop_middle_layer,
                         memory_size = memory_size,
-                        trajectory_length = trajectory_length)
+                        trajectory_length = trajectory_length,
+                        learning_rate = learning_rate,
+                        learning_rate_critic = learning_rate_critic)
 
     global hook = PDEhook(min_best_episode = min_best_episode, use_random_init = use_random_init)
 end
@@ -352,6 +297,84 @@ function generate_random_init()
     y0 = y0 * 30 / norm(y0)
 end
 
+initialize_setup()
+
+# plotrun(use_best = false, plot3D = true)
+
+function train(use_random_init = true; loops = 8)
+    hook.use_random_init = use_random_init
+
+    No_Steps = 800
+
+    agent.policy.act_noise = act_noise
+    for i = 1:loops
+        println("")
+        println(agent.policy.act_noise)
+        run(agent, env, StopAfterEpisodeWithMinSteps(No_Steps), hook)
+        println(hook.bestreward)
+        agent.policy.act_noise = agent.policy.act_noise * 0.2
+
+        hook.rewards = clamp.(hook.rewards, -3000, 0)
+    end
+end
+
+function train_multi(No_Episodes = 2800)
+    global best_rewards = []
+    best_rewards = Vector{Float64}(best_rewards)
+    n_experiment = 0
+
+    while true
+        n = 1
+        n_experiment += 1
+        global rng = StableRNG(abs(rand(Int)))
+        initialize_setup(use_random_init = true)
+
+        println("")
+        println("--------- STARTING EXPERIMENT # $n_experiment ---------")
+        println("")
+
+        while n <= No_Episodes
+            inner_No_Episodes = 50
+            loops = 14
+            agent.policy.act_noise = 0.15
+            i = 1
+            while i <= loops && n <= No_Episodes
+                run(agent, env, StopAfterEpisode(inner_No_Episodes), hook)
+                println(hook.bestreward)
+                agent.policy.act_noise = agent.policy.act_noise * 0.9
+                println(agent.policy.act_noise)
+
+                hook.rewards = clamp.(hook.rewards, -3000, 0)
+                n += inner_No_Episodes
+                i += inner_No_Episodes
+            end
+        end
+
+        push!(best_rewards, hook.bestreward)
+        save(n_experiment)
+
+        FileIO.save(dirpath * "/saves/best_rewards.jld2","best_rewards",best_rewards)
+        # a = FileIO.load("./scripts/KS_spectral/sparse_8/saves/best_rewards.jld2","best_rewards")
+
+        println("")
+        println("--------- BEST REWARD: $(hook.bestreward) ---------")
+        println("")
+    end
+end
+
+#train()
+
+#plotrun(use_best = false)
+#plotrun()
+#plotrun(plot_best = true)
+#plotrun(plot3D = true)
+
+#plot_heat(p_te = 200.0, p_t_action = 100.0)
+#plot_heat(p_te = 200.0, p_t_action = 100.0, plot_separate = true, from = 90, to = 115)
+#plot_heat(p_te = 200.0, p_t_action = 100.0, use_best = false)
+#plot_heat(plot_best = true)
+
+
 function load(number = nothing)
     if isnothing(number)
         global hook = FileIO.load(dirpath * "/saves/hook.jld2","hook")
@@ -360,40 +383,24 @@ function load(number = nothing)
     else
         global hook = FileIO.load(dirpath * "/saves/hook$number.jld2","hook")
         global agent = FileIO.load(dirpath * "/saves/agent$number.jld2","agent")
-        global env = FileIO.load(dirpath * "/saves/env$number.jld2","env")
+        #global env = FileIO.load(dirpath * "/saves/env$number.jld2","env")
     end
 end
 
 function save(number = nothing)
-    isdir(dirpath * "/saves") || mkdir(dirpath * "./saves")
+    isdir(dirpath * "/saves") || mkdir(dirpath * "/saves")
 
     if isnothing(number)
         FileIO.save(dirpath * "/saves/hook.jld2","hook",hook)
         FileIO.save(dirpath * "/saves/agent.jld2","agent",agent)
-        FileIO.save(dirpath * "/saves/env.jld2","env",env)
+        #FileIO.save(dirpath * "/saves/env.jld2","env",env)
     else
         FileIO.save(dirpath * "/saves/hook$number.jld2","hook",hook)
         FileIO.save(dirpath * "/saves/agent$number.jld2","agent",agent)
-        FileIO.save(dirpath * "/saves/env$number.jld2","env",env)
+        #FileIO.save(dirpath * "/saves/env$number.jld2","env",env)
     end
 end
 
-function train(use_random_init = false; loops = 20)
-    hook.use_random_init = use_random_init
-    outer_loops = loops
+#FileIO.save("KSResults.jld2", "KSResults", KSResults)
+#global KSResults = FileIO.load("KSResults.jld2", "KSResults")
 
-    for j = 1:outer_loops
-        No_Episodes = 20
-        inner_loops = 20
-        agent.policy.act_noise = 0.02
-        for i = 1:inner_loops
-            println("")
-            println(agent.policy.act_noise)
-            run(agent, env, StopAfterEpisode(No_Episodes), hook)
-            println(hook.bestreward)
-            agent.policy.act_noise = agent.policy.act_noise * 0.9
-
-            hook.rewards = clamp.(hook.rewards, -3000, 0)
-        end
-    end
-end
