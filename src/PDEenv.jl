@@ -201,7 +201,7 @@ function (env::PDEenv)(action)
     if isnothing(env.do_step)
         if env.use_radau
             tspan = (env.time, env.time + env.dt)
-            prob = ODEProblem(f, env.y, tspan, env.p)
+            prob = ODEProblem(env.f, env.y, tspan, env.p)
             sol = solve(prob, RadauIIA5(), reltol=1e-8, abstol=1e-8)
             env.y = last(sol.u)
         else
@@ -227,13 +227,13 @@ function (env::PDEenv)(action)
         env.done = env.time >= env.te || maximum(abs.(env.y)) > env.max_value
         if maximum(abs.(env.y)) > env.max_value
             println("terminated early at $(env.steps) steps")
-            env.reward = -0.4 * (1 - (env.time/env.te)) .* ones(size(env.reward))
+            #env.reward += -0.4 * (1 - (env.time/env.te)) .* ones(size(env.reward))
         end
     elseif env.check_max_value == "reward"
         env.done = env.time >= env.te || maximum(abs.(env.reward)) > env.max_value
         if maximum(abs.(env.reward)) > env.max_value
             println("terminated early at $(env.steps) steps")
-            env.reward = -0.4 * (1 - (env.time/env.te)) .* ones(size(env.reward))
+            #env.reward += -0.4 * (1 - (env.time/env.te)) .* ones(size(env.reward))
         end
     else
         env.done = env.time >= env.te

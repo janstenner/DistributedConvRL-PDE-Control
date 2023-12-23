@@ -98,6 +98,23 @@ function ic(caseno, rng = nothing)
                 omghat = omghat + taylorvtx(first(rand(rng, 1)*Lx),first(rand(rng, 1)*Ly),Lx/20,first(rand(rng, 1)*2-[1.0]));
             end
         end
+    elseif caseno == 4
+        # % case = 4
+        # % -- even more multiple random Taylor vortices
+        nv = 50;
+        if isnothing(rng)
+            omghat = taylorvtx(first(rand(1)*Lx), first(rand(1)*Ly), Lx/20 * (0.5+rand()), first(rand(1)*2-[1.0]));
+        else
+            omghat = taylorvtx(first(rand(rng, 1)*Lx), first(rand(rng, 1)*Ly), Lx/20 * (0.5+rand(rng)), first(rand(rng, 1)*2-[1.0]));
+        end
+
+        for i = 2:nv
+            if isnothing(rng)
+                omghat = omghat + taylorvtx(first(rand(1)*Lx),first(rand(1)*Ly), Lx/20 * (0.5+rand()) ,first(rand(1)*2-[1.0]));
+            else
+                omghat = omghat + taylorvtx(first(rand(rng, 1)*Lx),first(rand(rng, 1)*Ly), Lx/20 * (0.5+rand(rng)) ,first(rand(rng, 1)*2-[1.0]));
+            end
+        end
     end
     return omghat
 end

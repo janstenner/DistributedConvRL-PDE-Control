@@ -1,5 +1,5 @@
 dirpath = string(@__DIR__)
-seed = 661
+seed = 570
 
 
 # Set this to false if you want to train an agent yourself.
@@ -11,9 +11,9 @@ evaluation = true
 gpu_env = true
 
 #set the number of sensors per axis (this is also the amount of actors per axis)
-sensors_per_axis = 16
+sensors_per_axis = 32
 #variance of the gaussian curve for convolution
-variance = 0.04
+variance = 0.022
 
 
 include(pwd() * "/scripts/Fluid/setup/FluidSetup.jl")
@@ -24,6 +24,6 @@ if evaluation
     testrun(use_best = true)
     plot(abs.(rewards))
 else
-    train(; loops = 6)
+    train(; loops = 5)
     save()
 end

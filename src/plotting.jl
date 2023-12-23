@@ -1,7 +1,8 @@
 using PlotlyJS
 using Blink
 
-function plot_heat(;use_best = true, p_dt = nothing, p_te = 30.0, p_t_action = 20.0, plot_best = false, use_random_init = true, plot_separate = false)
+function plot_heat(;use_best = true, p_dt = nothing, p_te = 30.0, p_t_action = 20.0, plot_best = false, use_random_init = true, plot_separate = false, from = nothing, to = nothing)
+
     if !plot_best
         reset!(env)
 
@@ -9,8 +10,19 @@ function plot_heat(;use_best = true, p_dt = nothing, p_te = 30.0, p_t_action = 2
             env.y = generate_random_init()
         end
 
+        global y0 = env.y
+
         env.te = p_te
         if !isnothing(p_dt) env.dt = p_dt end
+
+        if isnothing(from)
+            from = 0
+        end
+    
+        if isnothing(to)
+            to = p_te
+        end
+
         temp_start_steps = agent.policy.start_steps
         agent.policy.start_steps = -1
         if use_best
@@ -76,6 +88,14 @@ function plot_heat(;use_best = true, p_dt = nothing, p_te = 30.0, p_t_action = 2
         global rresults = map(mean, hook.bestDF.reward)
         global y_axis = collect(dx:dx:Lx)
         global x_axis = collect(0:env.dt:hook.bestDF.timestep[end]/env.dt)
+        
+        if isnothing(from)
+            from = 0
+        end
+    
+        if isnothing(to)
+            to = Lx
+        end
     end
 
     if length(size(env.y)) > 1
@@ -85,23 +105,42 @@ function plot_heat(;use_best = true, p_dt = nothing, p_te = 30.0, p_t_action = 2
     end
 
     colorscale = [[0, "blue"], [0.5, "white"], [1, "red"], ]
-    ymax = max(abs(minimum(yresults)), abs(maximum(yresults)))
-    pmax = max(abs(minimum(presults)), abs(maximum(presults)))
+    ymax = max(abs(minimum(yresults[:,:, Int(floor(from/env.dt))+1:Int(floor(to/env.dt))+1 ])), abs(maximum(yresults[:,:, Int(floor(from/env.dt))+1:Int(floor(to/env.dt))+1 ])))
+    pmax = max(abs(minimum(presults[:, Int(floor(from/env.dt))+1:Int(floor(to/env.dt))+1 ])), abs(maximum(presults[:, Int(floor(from/env.dt))+1:Int(floor(to/env.dt))+1 ])))
     layout = Layout(
                 plot_bgcolor="#f1f3f7",
-                title = "plot_best = $plot_best,  use_best = $use_best,   best NN: $(hook.bestepisode)",
+                font=attr(family="Computer Modern", size=20, color="black"),
+                #title = "plot_best = $plot_best,  use_best = $use_best,   best NN: $(hook.bestepisode)",
                 coloraxis = attr(cmin = -ymax, cmid = 0, cmax = ymax, colorscale = colorscale),
-                coloraxis2 = attr(cmin = -pmax, cmid = 0, cmax = pmax, colorscale = colorscale)
+                coloraxis2 = attr(cmin = -pmax, cmid = 0, cmax = pmax, colorscale = colorscale),
+                # yaxis = attr(title="y", gridcolor = "#aaaaaa", linecolor = "#000000"),
+                # xaxis = attr(title="t", gridcolor = "#aaaaaa", linecolor = "#000000", range = [from,to])
             )
 
     if plot_separate
         for i in 1:size(yresults)[1]
+            layout = Layout(
+                plot_bgcolor="#ffffff",
+                font=attr(family="Computer Modern", size=26, color="black"),
+                coloraxis = attr(cmin = -ymax, cmid = 0, cmax = ymax, colorscale = colorscale),#, showscale=false),
+                coloraxis2 = attr(cmin = -pmax, cmid = 0, cmax = pmax, colorscale = colorscale),
+                yaxis = attr(title="y", gridcolor = "#aaaaaa", linecolor = "#000000"),
+                xaxis = attr(title="t", gridcolor = "#aaaaaa", linecolor = "#000000", range = [from,to])
+            )
             p = plot(heatmap(x = x_axis, y = y_axis, z = yresults[i,:,:], coloraxis="coloraxis"), layout)
             display(p)
         end
+        layout = Layout(
+                plot_bgcolor="#ffffff",
+                font=attr(family="Computer Modern", size=26, color="black"),
+                coloraxis = attr(cmin = -ymax, cmid = 0, cmax = ymax, colorscale = colorscale),
+                coloraxis2 = attr(cmin = -pmax, cmid = 0, cmax = pmax, colorscale = colorscale),
+                yaxis = attr(title="p", gridcolor = "#aaaaaa", linecolor = "#000000"),
+                xaxis = attr(title="t", gridcolor = "#aaaaaa", linecolor = "#000000", range = [from,to])
+            )
         p = plot(heatmap(x = x_axis, y = y_axis, z = presults, coloraxis="coloraxis2"), layout)
         display(p)
-        p = plot(scatter(x = x_axis, y = rresults), layout)
+        p = plot(scatter(x = x_axis, y = rresults .* (-1)), layout)
         display(p)
     else
         p = make_subplots(rows=2 + yplots, cols=1, shared_xaxes=true)
@@ -129,7 +168,7 @@ function plot_heat(;use_best = true, p_dt = nothing, p_te = 30.0, p_t_action = 2
     end
 end
 
-function plot_sensors(actuators_to_sensors = nothing)
+function plot_sensors(;gaussians = gaussians, actuators_to_sensors = nothing)
     lll = []
     t = collect(1:nx) .* dx
 
@@ -479,4 +518,24 @@ function plotrun(;use_best = true, plot3D = false, plot_rewards = true, plot_bes
     agent.policy.start_steps = temp_start_steps
     env.dt = dt
     env.te = te
+end
+
+
+
+
+function plot_rewards(res_y = 100, res_action = 80, max_value = 30.0)
+
+    results = zeros(res_y, res_action)
+
+    for i in 1:res_y
+        for j in 1:res_action
+            y = max_value * i/res_y .* ones(size(sim_space))
+            gpu_env && (y = CuArray(y))
+            action = j/res_action .* ones(length(actuator_positions))
+
+            results[i,j] = reward_function(nothing; test = Dict("y" => y, "action" => action, "delta_action" => action))[1]
+        end
+    end
+
+    plot(heatmap(z=results))
 end

@@ -41,7 +41,10 @@ end
 
 function (hook::PDEhook)(::PreEpisodeStage, agent, env)
     if hook.use_random_init
-        env.y = generate_random_init()
+        env.y0 = generate_random_init()
+        env.y = env.y0
+
+        env.state = env.featurize(; env = env)
     end
 end
 
@@ -94,7 +97,7 @@ function (hook::PDEhook)(::PostEpisodeStage, agent, env)
 end
 
 function (hook::PDEhook)(::PostExperimentStage, agent, env)
-    if hook.is_display_on_exit
+    if hook.is_display_on_exit && !isempty(hook.rewards)
         println(lineplot(hook.rewards, title="Total reward per episode", xlabel="Episode", ylabel="Score"))
     end
 end

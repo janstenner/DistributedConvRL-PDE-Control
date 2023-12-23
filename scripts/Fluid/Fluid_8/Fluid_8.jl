@@ -1,5 +1,10 @@
-seed = 76
 dirpath = string(@__DIR__)
+seed = 531
+
+
+# Set this to false if you want to train an agent yourself.
+# Otherwise this script will load up a pre-trained agent and do an evaluation run.
+evaluation = true
 
 
 #Set this to false if you do not have a GPU that supports CUDA
@@ -14,12 +19,11 @@ variance = 0.08
 include(pwd() * "/scripts/Fluid/setup/FluidSetup.jl")
 
 
-initialize_setup()
-
-# use train(true) to train an agent yourself or load() to load up a pre-trained agent
-train(true; loops = 40)
-#load()
-
-testrun(use_best = true)
-
-plot(abs.(rewards))
+if evaluation
+    load()
+    testrun(use_best = true)
+    plot(abs.(rewards))
+else
+    train(; loops = 10)
+    save()
+end

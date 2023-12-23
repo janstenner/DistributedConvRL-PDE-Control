@@ -11,30 +11,41 @@ using FFTW
 using Random, Distributions
 using SparseArrays
 
+#--- disable printing of warnings thrown by SciMLBase about backwards compatibility of return codes that will be deprecated in Julia 1.9
+import Logging
+Logging.disable_logging(Logging.Warn)
+
 include(pwd() * "/src/fluid_rk4.jl")
 include(pwd() * "/src/PDEagent.jl")
 include(pwd() * "/src/PDEenv.jl")
 include(pwd() * "/src/PDEhook.jl")
 include(pwd() * "/src/plotting.jl")
+include(pwd() * "/src/StopCondition.jl")
+
+#dir variable
+dirpath = string(@__DIR__)
+open(dirpath * "/.gitignore", "w") do io
+    println(io, "frames/*")
+    println(io, "video_output/*")
+end
 
 
-# env parameters
+# train till 6 is enough for 32 and 16
 
-nu = 0.0005
+nu = 0.00005
 
 Lx  = 1;            
 Ly  = 1;
-nx  = 64;    
+nx  = 128;
+if evaluation
+    seed = 76
+    nx  = 256
+end  
 ny  = nx;
 dx  = Lx/nx;        
 dy  = Ly/ny;
 sim_space = Space(fill(-1..1, (nx, ny)))
 
-
-# sensor positions - 
-sensor_positions = [[i,j] for i in 1:Int(nx/sensors_per_axis):nx for j in 1:Int(ny/sensors_per_axis):ny]
-actuator_positions = [[i,j] for i in 1:Int(nx/sensors_per_axis):nx for j in 1:Int(ny/sensors_per_axis):ny]
-actuators_to_sensors = collect(1:length(sensor_positions))
 
 
 te = 6.0
@@ -42,7 +53,7 @@ t0 = 0.0
 dt = 0.02
 oversampling = floor(16*nx*dt)
 
-min_best_episode = 10
+min_best_episode = 1
 
 te_plot = 10.0
 dt_plot = dt
@@ -50,16 +61,23 @@ t_action = 2.0
 dt_slowmo = dt
 
 check_max_value = "reward"
-max_value = 0.025
+max_value = 3.0
+
+
+# sensor positions - 
+sensor_positions = [[i,j] for i in 1:Int(nx/sensors_per_axis):nx for j in 1:Int(ny/sensors_per_axis):ny]
+actuator_positions = [[i,j] for i in 1:Int(nx/sensors_per_axis):nx for j in 1:Int(ny/sensors_per_axis):ny]
+actuators_to_sensors = collect(1:length(sensor_positions))
 
 # agent tuning parameters
 memory_size = 0
-nna_scale = 0.4
+nna_scale = 1.8
+nna_scale_critic = 17.0
 drop_middle_layer = true
 temporal_steps = 1
-action_punish = 0.0005
-delta_action_punish = 0.0005
-window_size = 1
+action_punish = 0.002#0.0005
+delta_action_punish = 0.002#0.0005
+window_size = 3
 use_gpu = false
 action_space = Space(fill(-1..1, (1 + memory_size, length(actuator_positions))))
 use_radau = true
@@ -70,14 +88,18 @@ rng = StableRNG(seed)
 Random.seed!(seed)
 y = 0.99f0
 p = 0.995f0
-batch_size = 300
+batch_size = 3
 start_steps = 10
 start_policy = ZeroPolicy(action_space)
-update_after = 100
-update_freq = 50
+update_after = 10
+update_freq = 1
+update_loops = 20
+reset_stage = POST_EPISODE_STAGE
+learning_rate = 0.0005
+learning_rate_critic = 0.001
 act_limit = 1.0
-act_noise = 0.1
-trajectory_length = 40_000
+act_noise = 1.2
+trajectory_length = 1_800_000
 
 
 ## For Dealiasing [padding] in wavespace
@@ -117,7 +139,7 @@ y1 = y1[1:ny]
 
 xx,yy = meshgrid(x1,y1);
 
-y0_2D_standard = ic(3, rng)
+y0_2D_standard = ic(4, rng)
 y0_2D_standard = gpu_env ? CuArray(y0_2D_standard) : y0_2D_standard
 
 
@@ -175,11 +197,11 @@ function reward_function(env)
     
     sensors = zeros(length(actuator_positions))
 
-    y = abs.(y)
+    #y = abs.(y)
     #factor = 10_000 * (nx/100) * (ny/100)
     #convolution
     for i in 1:length(actuator_positions)
-        sensors[i] = send_to_host(dot(y, gaussians[actuators_to_sensors[i]]) ./ (100 * 600))
+        sensors[i] = send_to_host(abs.(dot(y, gaussians[actuators_to_sensors[i]])).^1.1 ./ (320))
     end
     sensor_rewards = - abs.(sensors)
 
@@ -342,13 +364,18 @@ function initialize_setup(;use_random_init = false)
                         start_steps = start_steps, 
                         start_policy = start_policy,
                         update_after = update_after, 
-                        update_freq = update_freq, 
+                        update_freq = update_freq,
+                        update_loops = update_loops,
+                        reset_stage = reset_stage,
                         act_limit = act_limit, 
                         act_noise = act_noise,
                         nna_scale = nna_scale,
+                        nna_scale_critic = nna_scale_critic,
                         drop_middle_layer = drop_middle_layer,
                         memory_size = memory_size,
-                        trajectory_length = trajectory_length)
+                        trajectory_length = trajectory_length,
+                        learning_rate = learning_rate,
+                        learning_rate_critic = learning_rate_critic)
 
     global hook = PDEhook(min_best_episode = min_best_episode,
                         use_random_init = use_random_init,
@@ -364,56 +391,18 @@ function initialize_setup(;use_random_init = false)
 end
 
 function generate_random_init()
-    result = ic(3, rng)
+    if evaluation
+        result = ic(4, rng)
+    else
+        result = ic(3, rng)
+    end
     result = gpu_env ? CuArray(result) : result
     result
 end
 
-function load(number = nothing)
-    if isnothing(number)
-        global hook = FileIO.load(dirpath * "/saves/hook.jld2","hook");
-        global agent = FileIO.load(dirpath * "/saves/agent.jld2","agent");
-        #global env = FileIO.load(dirpath * "/saves/env.jld2","env");
-    else
-        global hook = FileIO.load(dirpath * "/saves/hook$number.jld2","hook")
-        global agent = FileIO.load(dirpath * "/saves/agent$number.jld2","agent")
-        #global env = FileIO.load(dirpath * "/saves/env$number.jld2","env")
-    end
-end
+initialize_setup()
 
-function save(number = nothing)
-    isdir(dirpath * "/saves") || mkdir(dirpath * "./saves")
-
-    if isnothing(number)
-        FileIO.save(dirpath * "/saves/hook.jld2","hook",hook)
-        FileIO.save(dirpath * "/saves/agent.jld2","agent",agent)
-        FileIO.save(dirpath * "/saves/env.jld2","env",env)
-    else
-        FileIO.save(dirpath * "/saves/hook$number.jld2","hook",hook)
-        FileIO.save(dirpath * "/saves/agent$number.jld2","agent",agent)
-        FileIO.save(dirpath * "/saves/env$number.jld2","env",env)
-    end
-end
-
-function train(use_random_init = false; loops = 40)
-    hook.use_random_init = use_random_init
-
-
-    No_Episodes = 2
-    loops = loops
-    agent.policy.act_noise = 0.13
-    for i = 1:loops
-        println("")
-        println(agent.policy.act_noise)
-        run(agent, env, StopAfterEpisode(No_Episodes), hook)
-        println(hook.bestreward)
-        agent.policy.act_noise = agent.policy.act_noise * 0.7
-        global last_an = agent.policy.act_noise
-
-        hook.rewards = clamp.(hook.rewards, -30000, 0)
-    end
-
-end
+# plotrun(use_best = false, plot3D = true)
 
 function testrun(;viz = true, use_best = false, negate = false, no_action = false, video = false)
     if negate
@@ -439,23 +428,25 @@ function testrun(;viz = true, use_best = false, negate = false, no_action = fals
 
         temp_noise = agent.policy.act_noise
         agent.policy.act_noise = 0.0
+    end
 
-        if video
-            rm(dirpath * "/frames/", recursive=true, force=true)
-            mkdir(dirpath * "/frames")
-        end
+    if video
+        rm(dirpath * "/frames/", recursive=true, force=true)
+        mkdir(dirpath * "/frames")
     end
 
     use_best && (agent.policy.update_step = 0)
     negate && (agent_negate.policy.update_step = 0)
-    (use_best || negate) && (global rewards = Vector{Float64}())
-    (use_best || negate) && (reward_sum = 0.0)
+    (use_best || negate) && (global energy = [])
+    (use_best || negate) && (energy_sum = 0.0)
 
     (use_best || negate) || hook(PRE_EXPERIMENT_STAGE, agent, env)
     (use_best || negate) || agent(PRE_EXPERIMENT_STAGE, env)
 
-    if viz
-        w = Window()
+    if viz || video
+        if viz
+            w = Window()
+        end
         colorscale = [[0, "blue"], [0.5, "yellow"], [1, "red"], ]
         ymax = 30
         layout = Layout(
@@ -465,8 +456,8 @@ function testrun(;viz = true, use_best = false, negate = false, no_action = fals
     end
 
     loop_end_outer = (use_best || negate) ? 1 : 5
-    loop_end_inner = (use_best || negate)  ? 1 : 2
-    (use_best || negate)  || (agent.policy.act_noise = 0.18)
+    loop_end_inner = (use_best || negate)  ? 1 : 3
+    (use_best || negate)  || (agent.policy.act_noise = act_noise)
 
     for j in 1:loop_end_outer
         for i in 1:loop_end_inner
@@ -476,9 +467,11 @@ function testrun(;viz = true, use_best = false, negate = false, no_action = fals
 
             #env.y = yyy
 
-            if viz
+            if viz || video
                 p = plot(heatmap(z=send_to_host(real(ifft(env.y))), coloraxis="coloraxis"), layout)
-                body!(w,p)
+                if viz
+                    body!(w,p)
+                end
             end
 
             n = 1
@@ -491,14 +484,14 @@ function testrun(;viz = true, use_best = false, negate = false, no_action = fals
 
                 env(action)
 
-                if viz
+                if viz || video
                     n == 50 && (global pic50 = send_to_host(real(ifft(env.y))))
                     n == 250 && (global pic250 = send_to_host(real(ifft(env.y))))
 
                     react!(p, [heatmap(z=send_to_host(real(ifft(env.y))), coloraxis="coloraxis")], layout)
                     sleep(0.05)
 
-                    if use_best && video
+                    if video
                         savefig(p, dirpath * "/frames/a$(lpad(string(n), 3, '0')).png"; width=1000, height=800)
                     end
                 end
@@ -507,11 +500,12 @@ function testrun(;viz = true, use_best = false, negate = false, no_action = fals
                 (use_best || negate) || agent(POST_ACT_STAGE, env)
                 (use_best || negate) || hook(POST_ACT_STAGE, agent, env)
 
-                println(mean(env.reward))
-
                 if use_best || negate
-                    reward_sum += mean(env.reward)
-                    push!(rewards, mean(env.reward))
+                    println(sum(abs.(send_to_host(real(ifft(env.y))))))
+                    energy_sum += sum(abs.(send_to_host(real(ifft(env.y)))))
+                    push!(energy, sum(abs.(send_to_host(real(ifft(env.y))))))
+                else
+                    println(mean(env.reward))
                 end
             end
             (use_best || negate) || agent(POST_EPISODE_STAGE, env)
@@ -522,8 +516,8 @@ function testrun(;viz = true, use_best = false, negate = false, no_action = fals
         end
 
         println("@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@")
-        (use_best || negate) ? println(reward_sum) : println(hook.bestreward)
-        (use_best || negate) || (agent.policy.act_noise = agent.policy.act_noise * 0.7)
+        (use_best || negate) ? println(energy_sum) : println(hook.bestreward)
+        (use_best || negate) || (agent.policy.act_noise = agent.policy.act_noise * 0.2)
         (use_best || negate) || println(agent.policy.act_noise)
         println("@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@")
 
@@ -539,11 +533,124 @@ function testrun(;viz = true, use_best = false, negate = false, no_action = fals
         agent.policy.act_noise = temp_noise
 
         agent.policy.update_after = temp_update_after
+    end
 
-        if video
-            isdir(dirpath * "/video_output") || mkdir(dirpath * "/video_output")
-            rm(dirpath * "/video_output/output.mp4", force=true)
-            run(`ffmpeg -framerate 16 -i "$(dirpath)/frames/a%03d.png" -c:v libx264 -crf 21 -an -pix_fmt yuv420p10le "$(dirpath)/video_output/output.mp4"`)
-        end
+    if video
+        isdir(dirpath * "/video_output") || mkdir(dirpath * "/video_output")
+        rm(dirpath * "/video_output/output.mp4", force=true)
+        run(`ffmpeg -framerate 16 -i "$(dirpath)/frames/a%03d.png" -c:v libx264 -crf 21 -an -pix_fmt yuv420p10le "$(dirpath)/video_output/output.mp4"`)
     end
 end
+
+frame = 1
+
+function train(use_random_init = true; loops = 6)
+    hook.use_random_init = use_random_init
+
+    No_Steps = 580
+
+    agent.policy.act_noise = act_noise
+    for i = 1:loops
+        println("")
+        println(agent.policy.act_noise)
+        run(agent, env, StopAfterEpisodeWithMinSteps(No_Steps), hook)
+        println(hook.bestreward)
+        agent.policy.act_noise = agent.policy.act_noise * 0.6
+
+        hook.rewards = clamp.(hook.rewards, -3000, 0)
+    end
+end
+#train()
+
+function train_multi(No_Episodes = 17)
+    global best_rewards = []
+    best_rewards = Vector{Float64}(best_rewards)
+    n_experiment = 0
+
+    while true
+        n = 1
+        n_experiment += 1
+        global rng = StableRNG(abs(rand(Int)))
+        initialize_setup(use_random_init = true)
+
+        println("")
+        println("--------- STARTING EXPERIMENT # $n_experiment ---------")
+        println("")
+
+        while n <= No_Episodes
+            inner_No_Episodes = 1
+            loops = 18
+            agent.policy.act_noise = 0.17
+            i = 1
+            while i <= loops && n <= No_Episodes
+                run(agent, env, StopAfterEpisode(inner_No_Episodes), hook)
+                println(hook.bestreward)
+                agent.policy.act_noise = agent.policy.act_noise * 0.7
+                println(agent.policy.act_noise)
+
+                hook.rewards = clamp.(hook.rewards, -30000, 0)
+                n += inner_No_Episodes
+                i += 1
+            end
+        end
+
+        push!(best_rewards, hook.bestreward)
+        save(n_experiment)
+
+        FileIO.save(dirpath * "/saves/best_rewards.jld2","best_rewards",best_rewards)
+        # a = FileIO.load("./scripts/KS_spectral/sparse_8/saves/best_rewards.jld2","best_rewards")
+
+        println("")
+        println("--------- BEST REWARD: $(hook.bestreward) ---------")
+        println("")
+    end
+end
+
+#train()
+
+#run(agent_negate, env, StopAfterEpisode(1), hook2);
+
+#plotrun(use_best = false)
+#plotrun()
+#plotrun(plot_best = true)
+#plotrun(plot3D = true)
+
+#plot_heat(p_te = 200.0, p_t_action = 100.0)
+#plot_heat(p_te = 200.0, p_t_action = 100.0, use_best = false)
+#plot_heat(plot_best = true)
+
+
+function load(number = nothing)
+    if isnothing(number)
+        global hook = FileIO.load(dirpath * "/saves/hook.jld2","hook");
+        global agent = FileIO.load(dirpath * "/saves/agent.jld2","agent");
+        #global env = FileIO.load(dirpath * "/saves/env.jld2","env");
+    else
+        global hook = FileIO.load(dirpath * "/saves/hook$number.jld2","hook")
+        global agent = FileIO.load(dirpath * "/saves/agent$number.jld2","agent")
+        #global env = FileIO.load(dirpath * "/saves/env$number.jld2","env")
+    end
+end
+
+function save(number = nothing)
+    isdir(dirpath * "/saves") || mkdir(dirpath * "/saves")
+
+    if isnothing(number)
+        FileIO.save(dirpath * "/saves/hook.jld2","hook",hook)
+        FileIO.save(dirpath * "/saves/agent.jld2","agent",agent)
+        #FileIO.save(dirpath * "/saves/env.jld2","env",env)
+    else
+        FileIO.save(dirpath * "/saves/hook$number.jld2","hook",hook)
+        FileIO.save(dirpath * "/saves/agent$number.jld2","agent",agent)
+        #FileIO.save(dirpath * "/saves/env$number.jld2","env",env)
+    end
+end
+
+#FileIO.save("corrupted_y.jld2","corrupted_y",corrupted_y)
+#corrupted_y = FileIO.load("corrupted_y.jld2","corrupted_y")
+#yyy = corrupted_y[280]
+
+#FileIO.save("FluidResults.jld2", "FluidResults", FluidResults)
+#global FluidResults = FileIO.load("FluidResults.jld2", "FluidResults")
+#env.y0 = CuArray(FluidResults["y0"])
+#env.y0 = CuArray(FluidResults["y0_128"])
