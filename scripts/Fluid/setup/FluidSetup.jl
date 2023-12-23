@@ -22,13 +22,6 @@ include(pwd() * "/src/PDEhook.jl")
 include(pwd() * "/src/plotting.jl")
 include(pwd() * "/src/StopCondition.jl")
 
-#dir variable
-dirpath = string(@__DIR__)
-open(dirpath * "/.gitignore", "w") do io
-    println(io, "frames/*")
-    println(io, "video_output/*")
-end
-
 
 # train till 6 is enough for 32 and 16
 
@@ -501,9 +494,10 @@ function testrun(;viz = true, use_best = false, negate = false, no_action = fals
                 (use_best || negate) || hook(POST_ACT_STAGE, agent, env)
 
                 if use_best || negate
-                    println(sum(abs.(send_to_host(real(ifft(env.y))))))
-                    energy_sum += sum(abs.(send_to_host(real(ifft(env.y)))))
-                    push!(energy, sum(abs.(send_to_host(real(ifft(env.y))))))
+                    temp_energy = sum(abs.(send_to_host(real(ifft(env.y))))) / (nx*ny)
+                    println(temp_energy)
+                    energy_sum += temp_energy
+                    push!(energy, temp_energy)
                 else
                     println(mean(env.reward))
                 end

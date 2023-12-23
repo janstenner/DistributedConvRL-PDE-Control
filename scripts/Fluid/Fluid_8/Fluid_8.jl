@@ -22,7 +22,7 @@ include(pwd() * "/scripts/Fluid/setup/FluidSetup.jl")
 if evaluation
     load()
     testrun(use_best = true)
-    plot(abs.(rewards))
+    plot(abs.(energy))
 else
     train(; loops = 10)
     save()
