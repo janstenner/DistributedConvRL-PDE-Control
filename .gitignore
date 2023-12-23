@@ -9,6 +9,8 @@ plots
 notebooks
 _research
 
+Manifest.toml
+
 frames/*
 video_output/*
 
